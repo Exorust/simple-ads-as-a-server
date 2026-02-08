@@ -9,11 +9,13 @@ dependencies = [
     "qdrant-client>=1.16.2",
     "mcp>=1.0.0",
     "fastembed>=0.2.0",
+    "pydantic-settings>=2.12.0",
 ]
 
 [project.scripts]
 ad-injector = "ad_injector.main:main"
 ad-index = "ad_injector.cli:main"
+ad-data-plane = "ad_injector.main_runtime:main"
 
 [build-system]
 requires = ["hatchling"]

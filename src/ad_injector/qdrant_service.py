@@ -5,7 +5,7 @@ from pathlib import Path
 
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
-from .config import AD_ID_NAMESPACE, COLLECTION_NAME, EMBEDDING_DIMENSION, get_qdrant_client
+from .config.qdrant import AD_ID_NAMESPACE, COLLECTION_NAME, EMBEDDING_DIMENSION, get_qdrant_client
 from .embedding_service import generate_embedding
 from .models import Ad
 
