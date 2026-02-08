@@ -7,7 +7,6 @@ Control Plane tools – admin/provisioning ops
 from __future__ import annotations
 
 import json
-import uuid
 
 from ..models.mcp_requests import MatchRequest
 from ..models.mcp_responses import AdCandidate, MatchResponse
@@ -57,6 +56,7 @@ def register_data_plane_tools(mcp):
         Returns:
             JSON string with ranked ad candidates
         """
+        from ..app.match_service import MatchService
         from ..models.mcp_requests import MatchConstraints, PlacementContext
 
         # Validate through DTOs
@@ -75,12 +75,9 @@ def register_data_plane_tools(mcp):
             ),
         )
 
-        # Stub response until MatchService is wired
-        response = MatchResponse(
-            candidates=[],
-            request_id=str(uuid.uuid4()),
-            placement=request.placement.placement,
-        )
+        # Delegate to MatchService — all business logic lives there
+        service = MatchService()
+        response = service.match(request)
         return response.model_dump_json(indent=2)
 
 

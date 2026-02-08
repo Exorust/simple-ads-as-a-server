@@ -1,13 +1,12 @@
-"""CLI commands for managing Qdrant collection."""
+"""CLI commands for managing the ads collection (Control Plane)."""
 
 import argparse
 import json
 import sys
 from pathlib import Path
 
-from .embedding_service import generate_embedding
+from .app.index_service import IndexService
 from .models import Ad
-from .qdrant_service import create_collection, delete_collection, get_collection_info, upsert_ad
 
 # Default path to demo ads JSON (project root / data / test_ads.json)
 _DEFAULT_ADS_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "test_ads.json"
@@ -35,15 +34,13 @@ def load_ads_from_file(path: Path) -> list[Ad]:
 
 
 def seed_ads(file_path: Path | None = None) -> None:
-    """Load demo ads from a JSON file and upsert them into the collection."""
+    """Load demo ads from a JSON file and upsert them via IndexService."""
     path = file_path if file_path is not None else _DEFAULT_ADS_PATH
     ads = load_ads_from_file(path)
     print(f"Adding {len(ads)} ads from {path}...")
-    for ad in ads:
-        embedding = generate_embedding(ad.embedding_text)
-        upsert_ad(ad, embedding)
-        print(f"  Added: {ad.ad_id} - {ad.title}")
-    print(f"Successfully added {len(ads)} ads.")
+    svc = IndexService()
+    count = svc.upsert_ads(ads)
+    print(f"Successfully added {count} ads.")
 
 
 def main():
@@ -75,13 +72,19 @@ def main():
     )
 
     args = parser.parse_args()
+    svc = IndexService()
 
     if args.command == "create":
-        create_collection(dimension=args.dimension)
+        result = svc.ensure_collection(dimension=args.dimension)
+        if result["created"]:
+            print(f"Created collection: {result['name']}")
+        else:
+            print(f"Collection already exists: {result['name']}")
     elif args.command == "delete":
-        delete_collection()
+        svc.delete_collection()
+        print("Deleted collection.")
     elif args.command == "info":
-        info = get_collection_info()
+        info = svc.collection_info()
         print(f"Collection: {info['name']}")
         print(f"Status: {info['status']}")
         print(f"Points count: {info['points_count']}")
