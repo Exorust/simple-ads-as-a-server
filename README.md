@@ -117,9 +117,9 @@ The system is split into two MCP server planes:
 
 ### Data Plane tools (runtime, LLM-facing)
 
-- `ads_match` — semantic ad matching
-- `ads_explain` — audit/debug trace for a match
-- `ads_health` — readiness check
+- `ads_match` — semantic ad matching (the **only** tool exposed; enforced by allowlist + tests)
+
+The Data Plane uses an explicit allowlist (`DATA_PLANE_ALLOWED_TOOLS`). No destructive or admin tools (create, delete, upsert, etc.) can be registered. This is verified by unit tests.
 
 ### Control Plane tools (admin)
 
@@ -175,42 +175,81 @@ uv run python -m ad_injector.cli seed
 
 ## Validating the MCP servers
 
-### 1. Verify Data Plane starts and has no admin tools
+### 1. Run the test suite
 
 ```bash
-# Confirm it creates without error and only registers data plane tools
+uv run pytest tests/ -v
+```
+
+This runs the Data Plane guardrail tests which assert:
+- Data Plane exposes **exactly** `ads_match` (nothing else)
+- No forbidden/destructive tools on the Data Plane
+- Control Plane has admin tools and does **not** have `ads_match`
+
+### 2. Verify Data Plane starts and only exposes `ads_match`
+
+```bash
 uv run python -c "
 from ad_injector.mcp.server import create_server
+from ad_injector.mcp.tools import DATA_PLANE_ALLOWED_TOOLS
 s = create_server('data')
+tools = set(s._tool_manager._tools.keys())
 print(f'Server: {s.name}')
-print('Tools registered — ready for stdio transport')
+print(f'Tools:  {tools}')
+assert tools == DATA_PLANE_ALLOWED_TOOLS, f'FAIL: expected {DATA_PLANE_ALLOWED_TOOLS}'
+print('PASS: only ads_match registered')
 "
 ```
 
-### 2. Verify Control Plane starts and has no data tools
+### 3. Verify Control Plane starts with admin tools
 
 ```bash
 uv run python -c "
 from ad_injector.mcp.server import create_server
 s = create_server('admin')
+tools = set(s._tool_manager._tools.keys())
 print(f'Server: {s.name}')
-print('Tools registered — ready for stdio transport')
+print(f'Tools:  {tools}')
+assert 'ads_match' not in tools, 'FAIL: ads_match on admin plane'
+assert 'collection_ensure' in tools
+print('PASS: admin tools registered, no ads_match')
 "
 ```
 
-### 3. Verify health tool responds (Data Plane)
+### 4. Verify ads_match DTO validation
 
 ```bash
 uv run python -c "
-from ad_injector.mcp.server import create_server
-import json
-s = create_server('data')
-# ads_health is the only tool wired up so far
-print('ads_health responds correctly' if 'ok' in s.call_tool('ads_health', {}) else 'FAIL')
-" 2>/dev/null || echo "Note: tool invocation requires running MCP server — use MCP client for full validation"
+from ad_injector.models import MatchRequest, MatchConstraints, PlacementContext, MatchResponse, AdCandidate
+
+# Valid request
+req = MatchRequest(
+    context_text='I want to learn Python',
+    top_k=5,
+    placement=PlacementContext(placement='sidebar', surface='chat'),
+    constraints=MatchConstraints(topics=['python'], locale='en-US', sensitive_ok=False),
+)
+print(f'MatchRequest OK: context_text={req.context_text!r}, top_k={req.top_k}')
+print(f'  constraints.topics={req.constraints.topics}, locale={req.constraints.locale}')
+
+# Valid response
+resp = MatchResponse(
+    candidates=[AdCandidate(ad_id='ad-001', advertiser_id='adv-1', title='Learn Python',
+        body='Courses', cta_text='Go', landing_url='https://example.com', score=0.95, match_id='m-1')],
+    request_id='req-xyz', placement='sidebar',
+)
+print(f'MatchResponse OK: {len(resp.candidates)} candidate(s)')
+
+# Invalid request (empty context) fails
+try:
+    MatchRequest(context_text='', top_k=5)
+    print('FAIL: empty context_text should be rejected')
+except Exception:
+    print('PASS: empty context_text rejected')
+"
 ```
 
-### 4. Verify config loads and validates
+### 5. Verify config loads and validates
 
 ```bash
 # Defaults
@@ -224,7 +263,7 @@ print(f'mode={s.mcp_mode.value} host={s.qdrant_host} port={s.qdrant_port} model=
 MCP_MODE=invalid uv run python -c "from ad_injector.config.runtime import RuntimeSettings; RuntimeSettings()" 2>&1 | head -3
 ```
 
-### 5. Verify import isolation (Data Plane does not load admin code)
+### 6. Verify import isolation (Data Plane does not load admin code)
 
 ```bash
 uv run python -c "
@@ -302,19 +341,46 @@ query_embedding = your_embedding_function("python tutorial")
 results = query_ads(query_embedding, top_k=5)
 ```
 
-## Qdrant Filtering
+## `ads_match` request / response schemas
 
-You can filter queries using Qdrant's filter syntax:
+The Data Plane `ads_match` tool uses typed DTOs — no raw dict filters are accepted.
 
-```python
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+### Request parameters
 
-# Filter by advertiser
-filter_dict = Filter(
-    must=[
-        FieldCondition(key="advertiser_id", match=MatchValue(value="adv-123"))
-    ]
-)
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `context_text` | string (1-10000 chars) | *required* | Conversational / page context to match against |
+| `top_k` | int (1-100) | `5` | Number of candidates to return |
+| `placement` | string | `"inline"` | Placement slot (e.g. `inline`, `sidebar`, `banner`) |
+| `surface` | string | `"chat"` | Surface type (e.g. `chat`, `search`, `feed`) |
+| `topics` | string[] \| null | `null` | Restrict to these topics |
+| `locale` | string \| null | `null` | Required locale (e.g. `en-US`) |
+| `verticals` | string[] \| null | `null` | Restrict to these verticals |
+| `exclude_advertiser_ids` | string[] \| null | `null` | Advertiser IDs to exclude |
+| `exclude_ad_ids` | string[] \| null | `null` | Ad IDs to exclude |
+| `age_restricted_ok` | bool | `false` | Allow age-restricted ads |
+| `sensitive_ok` | bool | `false` | Allow sensitive-content ads |
 
-results = query_ads(query_embedding, top_k=5, filter_dict=filter_dict)
+### Response shape
+
+```json
+{
+  "candidates": [
+    {
+      "ad_id": "ad-001",
+      "advertiser_id": "adv-123",
+      "title": "Learn Python Today",
+      "body": "Master Python programming...",
+      "cta_text": "Start Learning",
+      "landing_url": "https://example.com/python",
+      "score": 0.95,
+      "match_id": "m-abc123"
+    }
+  ],
+  "request_id": "req-xyz-456",
+  "placement": "sidebar"
+}
 ```
+
+- `match_id` can be passed to `ads_explain` (future) for audit traces
+- `score` is cosine similarity (0-1)

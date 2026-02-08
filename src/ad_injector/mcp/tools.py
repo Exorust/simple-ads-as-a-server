@@ -1,49 +1,92 @@
 """Tool registry for MCP servers.
 
-Data Plane tools  – read-only, LLM-facing
+Data Plane tools  – read-only, LLM-facing (explicit allowlist)
 Control Plane tools – admin/provisioning ops
 """
 
+from __future__ import annotations
+
 import json
+import uuid
+
+from ..models.mcp_requests import MatchRequest
+from ..models.mcp_responses import AdCandidate, MatchResponse
+
+# ---------------------------------------------------------------------------
+# Data Plane – explicit allowlist of tool names
+# ---------------------------------------------------------------------------
+DATA_PLANE_ALLOWED_TOOLS = frozenset({"ads_match"})
 
 
 def register_data_plane_tools(mcp):
-    """Register Data Plane (runtime / LLM-facing) tools on *mcp*."""
+    """Register Data Plane (runtime / LLM-facing) tools on *mcp*.
+
+    Only tools listed in ``DATA_PLANE_ALLOWED_TOOLS`` are registered.
+    No destructive or write operations are permitted.
+    """
 
     @mcp.tool()
-    def ads_match(query: str, top_k: int = 10) -> str:
-        """Match ads by semantic text query (read-only).
+    def ads_match(
+        context_text: str,
+        top_k: int = 5,
+        placement: str = "inline",
+        surface: str = "chat",
+        topics: list[str] | None = None,
+        locale: str | None = None,
+        verticals: list[str] | None = None,
+        exclude_advertiser_ids: list[str] | None = None,
+        exclude_ad_ids: list[str] | None = None,
+        age_restricted_ok: bool = False,
+        sensitive_ok: bool = False,
+    ) -> str:
+        """Match ads by semantic context (read-only).
 
         Args:
-            query: Text to match against ads
-            top_k: Number of results to return (1-100, default 10)
+            context_text: Conversational / page context to match against
+            top_k: Number of candidates to return (1-100, default 5)
+            placement: Placement slot (e.g. 'inline', 'sidebar', 'banner')
+            surface: Surface type (e.g. 'chat', 'search', 'feed')
+            topics: Restrict to these topics
+            locale: Required locale (e.g. 'en-US')
+            verticals: Restrict to these verticals
+            exclude_advertiser_ids: Advertiser IDs to exclude
+            exclude_ad_ids: Ad IDs to exclude
+            age_restricted_ok: Allow age-restricted ads
+            sensitive_ok: Allow sensitive-content ads
 
         Returns:
-            JSON string with matching ads, scores, and metadata
+            JSON string with ranked ad candidates
         """
-        raise NotImplementedError("ads_match: wiring to MatchService pending")
+        from ..models.mcp_requests import MatchConstraints, PlacementContext
 
-    @mcp.tool()
-    def ads_explain(match_id: str) -> str:
-        """Return an audit/debug trace for a prior match result.
+        # Validate through DTOs
+        request = MatchRequest(
+            context_text=context_text,
+            top_k=top_k,
+            placement=PlacementContext(placement=placement, surface=surface),
+            constraints=MatchConstraints(
+                topics=topics,
+                locale=locale,
+                verticals=verticals,
+                exclude_advertiser_ids=exclude_advertiser_ids,
+                exclude_ad_ids=exclude_ad_ids,
+                age_restricted_ok=age_restricted_ok,
+                sensitive_ok=sensitive_ok,
+            ),
+        )
 
-        Args:
-            match_id: The match ID returned by ads_match
+        # Stub response until MatchService is wired
+        response = MatchResponse(
+            candidates=[],
+            request_id=str(uuid.uuid4()),
+            placement=request.placement.placement,
+        )
+        return response.model_dump_json(indent=2)
 
-        Returns:
-            JSON string with eligibility trace
-        """
-        raise NotImplementedError("ads_explain: wiring pending")
 
-    @mcp.tool()
-    def ads_health() -> str:
-        """Lightweight health / readiness check.
-
-        Returns:
-            JSON string with status and capabilities
-        """
-        return json.dumps({"status": "ok", "plane": "data", "version": "0.1.0"})
-
+# ---------------------------------------------------------------------------
+# Control Plane – admin / provisioning ops
+# ---------------------------------------------------------------------------
 
 def register_control_plane_tools(mcp):
     """Register Control Plane (admin) tools on *mcp*."""
