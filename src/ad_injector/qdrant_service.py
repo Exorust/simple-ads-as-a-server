@@ -1,6 +1,7 @@
 """Qdrant service for ad storage and retrieval."""
 
 import os
+import uuid
 from pathlib import Path
 
 from qdrant_client.models import Distance, PointStruct, VectorParams
@@ -9,8 +10,16 @@ from .config import COLLECTION_NAME, EMBEDDING_DIMENSION, get_qdrant_client
 from .embedding_service import generate_embedding
 from .models import Ad
 
+# Namespace UUID for generating deterministic UUIDs from ad_id strings
+_AD_ID_NAMESPACE = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
 # Debug log path - relative to workspace root
 _DEBUG_LOG_PATH = Path(__file__).parent.parent.parent / ".cursor" / "debug.log"
+
+
+def _ad_id_to_uuid(ad_id: str) -> str:
+    """Convert a string ad_id to a deterministic UUID string for Qdrant."""
+    return str(uuid.uuid5(_AD_ID_NAMESPACE, ad_id))
 
 
 def create_collection(dimension: int = EMBEDDING_DIMENSION) -> None:
@@ -51,7 +60,7 @@ def upsert_ad(ad: Ad, embedding: list[float]) -> None:
         collection_name=COLLECTION_NAME,
         points=[
             PointStruct(
-                id=ad.ad_id,
+                id=_ad_id_to_uuid(ad.ad_id),
                 vector=embedding,
                 payload=ad.to_pinecone_metadata(),  # Reusing the same metadata format
             )
@@ -68,7 +77,7 @@ def upsert_ads(ads: list[tuple[Ad, list[float]]]) -> None:
     client = get_qdrant_client()
     points = [
         PointStruct(
-            id=ad.ad_id,
+            id=_ad_id_to_uuid(ad.ad_id),
             vector=embedding,
             payload=ad.to_pinecone_metadata(),
         )
@@ -93,9 +102,9 @@ def query_ads(
         List of matching ads with scores
     """
     client = get_qdrant_client()
-    results = client.search(
+    response = client.query_points(
         collection_name=COLLECTION_NAME,
-        query_vector=embedding,
+        query=embedding,
         limit=top_k,
         query_filter=filter_dict,
     )
@@ -105,7 +114,7 @@ def query_ads(
             "score": hit.score,
             "metadata": hit.payload,
         }
-        for hit in results
+        for hit in response.points
     ]
 
 
@@ -118,7 +127,7 @@ def delete_ad(ad_id: str) -> None:
     client = get_qdrant_client()
     client.delete(
         collection_name=COLLECTION_NAME,
-        points_selector=[ad_id],
+        points_selector=[_ad_id_to_uuid(ad_id)],
     )
 
 
@@ -128,54 +137,13 @@ def get_collection_info() -> dict:
     Returns:
         Collection info including vector count
     """
-    # #region agent log
-    import json
-    import time
-    _DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(_DEBUG_LOG_PATH, 'a') as f:
-        f.write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "A", "location": "qdrant_service.py:125", "message": "get_collection_info entry", "data": {"collection_name": COLLECTION_NAME}, "timestamp": time.time() * 1000}) + "\n")
-    # #endregion
     client = get_qdrant_client()
     info = client.get_collection(COLLECTION_NAME)
-    # #region agent log
-    with open(_DEBUG_LOG_PATH, 'a') as f:
-        f.write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "A,B,C,D,E", "location": "qdrant_service.py:131", "message": "info object type and attributes", "data": {"type": str(type(info)), "dir": [x for x in dir(info) if not x.startswith('_')], "hasattr_vectors_count": hasattr(info, 'vectors_count'), "hasattr_points_count": hasattr(info, 'points_count'), "hasattr_status": hasattr(info, 'status')}, "timestamp": time.time() * 1000}) + "\n")
-    # #endregion
-    # #region agent log
-    try:
-        points_count_val = info.points_count
-    except Exception as e:
-        points_count_val = f"ERROR: {e}"
-    with open(_DEBUG_LOG_PATH, 'a') as f:
-        f.write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "B", "location": "qdrant_service.py:137", "message": "points_count access test", "data": {"points_count": str(points_count_val)}, "timestamp": time.time() * 1000}) + "\n")
-    # #endregion
-    # #region agent log
-    try:
-        status_val = info.status
-    except Exception as e:
-        status_val = f"ERROR: {e}"
-    with open(_DEBUG_LOG_PATH, 'a') as f:
-        f.write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "C", "location": "qdrant_service.py:144", "message": "status access test", "data": {"status": str(status_val)}, "timestamp": time.time() * 1000}) + "\n")
-    # #endregion
-    # #region agent log
-    try:
-        if hasattr(info, 'result'):
-            result_attrs = [x for x in dir(info.result) if not x.startswith('_')]
-            result_has_vectors = hasattr(info.result, 'vectors_count')
-        else:
-            result_attrs = None
-            result_has_vectors = False
-    except Exception as e:
-        result_attrs = f"ERROR: {e}"
-        result_has_vectors = False
-    with open(_DEBUG_LOG_PATH, 'a') as f:
-        f.write(json.dumps({"sessionId": "debug-session", "runId": "run1", "hypothesisId": "D", "location": "qdrant_service.py:152", "message": "nested result attribute check", "data": {"has_result": hasattr(info, 'result'), "result_attrs": result_attrs, "result_has_vectors_count": result_has_vectors}, "timestamp": time.time() * 1000}) + "\n")
-    # #endregion
     return {
         "name": COLLECTION_NAME,
-        "vectors_count": info.vectors_count,
+        "indexed_vectors_count": info.indexed_vectors_count,
         "points_count": info.points_count,
-        "status": info.status,
+        "status": str(info.status),
     }
 
 

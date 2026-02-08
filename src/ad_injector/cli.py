@@ -99,8 +99,8 @@ def main():
     create_parser.add_argument(
         "--dimension",
         type=int,
-        default=1536,
-        help="Embedding dimension (default: 1536)",
+        default=384,
+        help="Embedding dimension (default: 384 for BAAI/bge-small-en-v1.5)",
     )
 
     # Delete collection command
@@ -123,7 +123,7 @@ def main():
         print(f"Collection: {info['name']}")
         print(f"Status: {info['status']}")
         print(f"Points count: {info['points_count']}")
-        print(f"Vectors count: {info['vectors_count']}")
+        print(f"Indexed vectors count: {info['indexed_vectors_count']}")
     elif args.command == "seed":
         create_sample_ads()
     else:
