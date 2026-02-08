@@ -17,6 +17,17 @@ from ..models.mcp_responses import AdCandidate, MatchResponse
 DATA_PLANE_ALLOWED_TOOLS = frozenset({"ads_match"})
 
 
+def _get_match_service():
+    """Composition root: build a MatchService with real adapters.
+
+    Lazy import so the MCP layer stays free of heavy deps at registration
+    time.  Called once per request (the adapters are lightweight).
+    """
+    from ..app.match_service import MatchService
+
+    return MatchService()
+
+
 def register_data_plane_tools(mcp):
     """Register Data Plane (runtime / LLM-facing) tools on *mcp*.
 
@@ -56,7 +67,6 @@ def register_data_plane_tools(mcp):
         Returns:
             JSON string with ranked ad candidates
         """
-        from ..app.match_service import MatchService
         from ..models.mcp_requests import MatchConstraints, PlacementContext
 
         # Validate through DTOs
@@ -76,7 +86,7 @@ def register_data_plane_tools(mcp):
         )
 
         # Delegate to MatchService — all business logic lives there
-        service = MatchService()
+        service = _get_match_service()
         response = service.match(request)
         return response.model_dump_json(indent=2)
 
