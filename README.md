@@ -1,10 +1,8 @@
 <div align="center">
   <img src="Adkit.png" alt="AdKit Logo">
   
-  <h1>AdKit</h1>
-  
   <p>
-    <strong>A lightweight, semantic ad-serving engine for the Model Context Protocol (MCP).</strong>
+    <strong>A lightweight, semantic ad-engine for the LLMs, available through MCP</strong>
   </p>
 
   <p>
