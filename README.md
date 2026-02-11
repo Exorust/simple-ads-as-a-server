@@ -29,7 +29,7 @@
 </div>
 <br/>
 
-
+## 🔥 Highlights
 
 A simple MCP Server that serves advertisements to LLMs! Use this to Inject Advertisements from your sponsors in your LLM. 
 
