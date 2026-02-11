@@ -33,6 +33,15 @@
 
 A simple MCP Server that serves advertisements to LLMs! Use this to Inject Advertisements from your sponsors in your LLM. 
 
+## Introduction
+
+
+**AdKit** is a lightweight semantic ad-matching engine built for **LLM applications**. It exposes a small, safe tool surface via **MCP** so agents can request relevant ads using natural-language context (chat turns, page content, search queries) — without brittle keyword rules.
+
+Under the hood, AdKit embeds your context locally (FastEmbed) and retrieves candidates from **Qdrant** using vector similarity plus **typed constraints** (topics, locale, verticals, exclusions, policy flags). It’s designed with a hard security boundary: the **Data Plane** is read-only and allowlisted, while the **Control Plane** handles ingestion and admin operations separately.
+
+Use it when you want “native” sponsor inserts or product recommendations that match meaning, not strings — and you want the architecture to stay sane when you ship to production.
+
 
 ## Where can you use this?
 - AI Agents & Assistants: Seamlessly inject relevant product recommendations or sponsored messages into chat interfaces (e.g., customer support bots, shopping assistants).
@@ -41,6 +50,7 @@ A simple MCP Server that serves advertisements to LLMs! Use this to Inject Adver
 
 - Content Discovery Platforms: Power "You might also like" features or affiliate link insertion based on the semantic meaning of the content being consumed, rather than fragile keyword matching.
 
+OR [**take inspiration from the architecture**](#architecture)
 
 ## Prerequisites
 
@@ -449,3 +459,12 @@ The Data Plane `ads_match` tool uses typed DTOs — no raw dict filters are acce
 
 - `match_id` can be passed to `ads_explain` for audit traces (why eligible/ineligible, filters, scores)
 - `score` is cosine similarity (0-1)
+
+
+## Talk to me
+
+I’m always up for nerding out about MCP tooling, retrieval systems, and practical LLM monetization.  
+If you’re building something similar—or want to pressure-test your architecture—reach out:
+
+- 🐦 Twitter: https://twitter.com/charoori_ai  
+- 📧 Email: mailto:chandrahas.aroori@gmail.com?subject=AdKit
