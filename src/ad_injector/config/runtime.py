@@ -49,6 +49,10 @@ class RuntimeSettings(BaseSettings):
         description="UUID namespace for deterministic ad ID generation",
     )
 
+    # --- Auth (optional: require key for production) ---
+    require_admin_key: bool = Field(default=False, description="If True, Control Plane requires MCP_ADMIN_KEY env")
+    require_data_key: bool = Field(default=False, description="If True, Data Plane requires MCP_DATA_KEY env")
+
     # --- Limits ---
     max_top_k: int = Field(default=100, ge=1, le=1000, description="Maximum top_k for match queries")
     max_batch_size: int = Field(default=500, ge=1, le=10000, description="Maximum ads per upsert batch")

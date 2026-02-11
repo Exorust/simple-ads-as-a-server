@@ -5,8 +5,8 @@ import json
 import sys
 from pathlib import Path
 
-from .app.index_service import IndexService
 from .models import Ad
+from .wiring import build_index_service
 
 # Default path to demo ads JSON (project root / data / test_ads.json)
 _DEFAULT_ADS_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "test_ads.json"
@@ -38,7 +38,7 @@ def seed_ads(file_path: Path | None = None) -> None:
     path = file_path if file_path is not None else _DEFAULT_ADS_PATH
     ads = load_ads_from_file(path)
     print(f"Adding {len(ads)} ads from {path}...")
-    svc = IndexService()
+    svc = build_index_service()
     count = svc.upsert_ads(ads)
     print(f"Successfully added {count} ads.")
 
@@ -72,7 +72,7 @@ def main():
     )
 
     args = parser.parse_args()
-    svc = IndexService()
+    svc = build_index_service()
 
     if args.command == "create":
         result = svc.ensure_collection(dimension=args.dimension)

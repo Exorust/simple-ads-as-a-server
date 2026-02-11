@@ -38,7 +38,7 @@ class Ad(BaseModel):
         return f"{self.title} {self.body} {topics_text}".strip()
 
     def to_pinecone_metadata(self) -> dict:
-        """Convert ad to Pinecone metadata format."""
+        """Convert ad to Pinecone metadata format. Includes enabled for bulk_disable support."""
         return {
             "ad_id": self.ad_id,
             "advertiser_id": self.advertiser_id,
@@ -52,4 +52,5 @@ class Ad(BaseModel):
             "blocked_keywords": self.targeting.blocked_keywords,
             "sensitive": self.policy.sensitive,
             "age_restricted": self.policy.age_restricted,
+            "enabled": True,
         }

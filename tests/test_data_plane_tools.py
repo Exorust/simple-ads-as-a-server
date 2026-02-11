@@ -11,10 +11,12 @@ from ad_injector.mcp.tools import DATA_PLANE_ALLOWED_TOOLS
 FORBIDDEN_TOOLS = {
     "collection_ensure",
     "collection_info",
+    "collection_migrate",
     "collection_delete",
     "collection_create",
     "ads_upsert_batch",
     "ads_delete",
+    "ads_bulk_disable",
     "ads_get",
     "query_ads",
     "delete_ad",

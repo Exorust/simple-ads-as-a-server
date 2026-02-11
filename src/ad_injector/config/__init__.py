@@ -1,7 +1,6 @@
 """Configuration package.
 
-Legacy Qdrant config is available via ``ad_injector.config.qdrant``.
-New runtime settings via ``ad_injector.config.runtime``.
+Single source of truth: ``RuntimeSettings`` via ``get_settings()``.
 """
 
 from .runtime import McpMode, RuntimeSettings, get_settings

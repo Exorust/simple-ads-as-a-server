@@ -101,7 +101,12 @@ To use a different file: `uv run ad-index seed --file path/to/ads.json`
 - Optionally, query ads from Python to confirm they are being served:
 
   ```bash
-  uv run python -c "from ad_injector.qdrant_service import match_ads; print(match_ads('python', top_k=2))"
+  uv run python -c "
+  from ad_injector.wiring import build_match_service
+  from ad_injector.models.mcp_requests import MatchRequest
+  r, _ = build_match_service().match(MatchRequest(context_text='python', top_k=2))
+  print(r.model_dump_json(indent=2))
+  "
   ```
 
   You should see matching ads (e.g. the Python/coding ad) in the output.
@@ -112,22 +117,41 @@ The system is split into two MCP server planes:
 
 | Plane | Purpose | Who calls it | Entrypoint |
 |-------|---------|-------------|------------|
-| **Data Plane** | Ad matching, read-only retrieval | LLMs / agents | `uv run ad-data-plane` |
-| **Control Plane** | Provisioning, ingestion, admin ops | Humans, CI/CD, backoffice | `uv run ad-index` (CLI) |
+| **Data Plane** | Ad matching, read-only retrieval | LLMs / agents | `uv run ad-mcp-data` or `uv run ad-data-plane` |
+| **Control Plane** | Provisioning, ingestion, admin ops | Humans, CI/CD, backoffice | `uv run ad-mcp-control` or `uv run ad-index` (CLI) |
+
+Run two separate processes for production: one Control Plane (admin) and one Data Plane (runtime). Each has its own auth scope (optional `MCP_ADMIN_KEY` / `MCP_DATA_KEY`).
 
 ### Data Plane tools (runtime, LLM-facing)
 
-- `ads_match` — semantic ad matching (the **only** tool exposed; enforced by allowlist + tests)
+- `ads_match` — semantic ad matching (context_text, placement, constraints, top_k); returns candidates and match_id for explain
+- `ads_explain` — audit trace for a prior match (match_id)
+- `ads_health` — liveness/readiness (Qdrant + embedding)
+- `ads_capabilities` — supported placements, constraint keys, embedding model, schema version
 
-The Data Plane uses an explicit allowlist (`DATA_PLANE_ALLOWED_TOOLS`). No destructive or admin tools (create, delete, upsert, etc.) can be registered. This is verified by unit tests.
+The Data Plane uses an explicit allowlist (`DATA_PLANE_ALLOWED_TOOLS`). No destructive or admin tools can be registered.
 
 ### Control Plane tools (admin)
 
-- `collection_ensure` — create/verify collection
-- `collection_info` — collection metadata
-- `ads_upsert_batch` — batch ad ingestion
-- `ads_delete` — delete an ad
+- `collection_ensure` — create/align collection (dimension, embedding_model_id, schema_version)
+- `collection_info` — collection metadata (points_count, dimension, embedding_model_id, schema_version)
+- `collection_migrate` — optional schema migrations (from_version, to_version)
+- `ads_upsert_batch` — batch ad ingestion (JSON array)
+- `ads_delete` — delete an ad by id
+- `ads_bulk_disable` — set enabled=false for ads matching a filter (JSON filter)
 - `ads_get` — fetch a single ad (debugging)
+
+### Repo structure
+
+```
+src/ad_injector/
+  models/           # Ad, Targeting, Policy; MCP request/response DTOs
+  services/         # MatchService, PolicyEngine, TargetingEngine, IndexService
+  adapters/         # QdrantVectorStore, FastEmbedProvider
+  mcp/              # server, tools, auth, observability
+  config/           # RuntimeSettings, env vars
+  ops/              # smoke_check, migrations
+```
 
 ### Configuration
 
@@ -135,7 +159,6 @@ Runtime settings are managed via environment variables (or `.env`), validated at
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MCP_MODE` | `data` | `data` (Data Plane) or `admin` (Control Plane) |
 | `QDRANT_HOST` | `localhost` | Qdrant server host |
 | `QDRANT_PORT` | `6333` | Qdrant server port |
 | `QDRANT_COLLECTION_NAME` | `ads` | Collection name |
@@ -144,19 +167,22 @@ Runtime settings are managed via environment variables (or `.env`), validated at
 | `MAX_TOP_K` | `100` | Max results per match query |
 | `MAX_BATCH_SIZE` | `500` | Max ads per upsert batch |
 | `REQUEST_TIMEOUT_SECONDS` | `30.0` | Per-request timeout |
+| `REQUIRE_ADMIN_KEY` | `false` | If true, Control Plane requires `MCP_ADMIN_KEY` env |
+| `REQUIRE_DATA_KEY` | `false` | If true, Data Plane requires `MCP_DATA_KEY` env |
 
 ## Running with uv
 
 ### Run Scripts
 
 ```bash
-# Data Plane MCP server (LLM-facing, read-only)
-uv run ad-data-plane
+# Data Plane MCP server (LLM-facing, read-only): ads_match, ads_explain, ads_health, ads_capabilities
+uv run ad-mcp-data
+# or: uv run ad-data-plane
 
-# Legacy MCP server (original single-tool server)
-uv run ad-injector
+# Control Plane MCP server (admin): collection.*, ads.upsert_batch, ads.delete, ads.bulk_disable, ads.get
+uv run ad-mcp-control
 
-# Control Plane — manage Qdrant collection (CLI)
+# CLI (Control Plane): create collection, seed ads, info, delete
 uv run ad-index create          # Create the collection
 uv run ad-index seed            # Add sample ads for testing
 uv run ad-index info            # Show collection info
@@ -166,7 +192,8 @@ uv run ad-index delete          # Delete the collection
 ### Run Python Files Directly
 
 ```bash
-uv run python -m ad_injector.main_runtime   # Data Plane
+uv run python -m ad_injector.main_runtime   # Data Plane MCP
+uv run python -m ad_injector.main_control   # Control Plane MCP
 uv run python -m ad_injector.cli create     # Control Plane CLI
 uv run python -m ad_injector.cli seed
 ```
@@ -182,11 +209,11 @@ uv run pytest tests/ -v
 ```
 
 This runs the Data Plane guardrail tests which assert:
-- Data Plane exposes **exactly** `ads_match` (nothing else)
+- Data Plane exposes only the allowlisted tools (`ads_match`, `ads_explain`, `ads_health`, `ads_capabilities`)
 - No forbidden/destructive tools on the Data Plane
-- Control Plane has admin tools and does **not** have `ads_match`
+- Control Plane has admin tools and does **not** expose Data Plane–only tools
 
-### 2. Verify Data Plane starts and only exposes `ads_match`
+### 2. Verify Data Plane exposes the allowlisted tools
 
 ```bash
 uv run python -c "
@@ -197,7 +224,7 @@ tools = set(s._tool_manager._tools.keys())
 print(f'Server: {s.name}')
 print(f'Tools:  {tools}')
 assert tools == DATA_PLANE_ALLOWED_TOOLS, f'FAIL: expected {DATA_PLANE_ALLOWED_TOOLS}'
-print('PASS: only ads_match registered')
+print('PASS: Data Plane allowlist registered')
 "
 ```
 
@@ -256,11 +283,11 @@ except Exception:
 uv run python -c "
 from ad_injector.config import get_settings
 s = get_settings()
-print(f'mode={s.mcp_mode.value} host={s.qdrant_host} port={s.qdrant_port} model={s.embedding_model_id}')
+print(f'host={s.qdrant_host} port={s.qdrant_port} model={s.embedding_model_id}')
 "
 
-# Invalid mode fails fast
-MCP_MODE=invalid uv run python -c "from ad_injector.config.runtime import RuntimeSettings; RuntimeSettings()" 2>&1 | head -3
+# Invalid port fails fast
+QDRANT_PORT=99999 uv run python -c "from ad_injector.config.runtime import RuntimeSettings; RuntimeSettings()" 2>&1 | head -3
 ```
 
 ### 6. Verify import isolation (Data Plane does not load admin code)
@@ -271,9 +298,7 @@ import sys
 from ad_injector.main_runtime import main
 mods = [m for m in sys.modules if m.startswith('ad_injector')]
 assert 'ad_injector.cli' not in mods, 'FAIL: cli imported'
-assert 'ad_injector.qdrant_service' not in mods, 'FAIL: qdrant_service imported'
-assert 'ad_injector.embedding_service' not in mods, 'FAIL: embedding_service imported'
-print('PASS: main_runtime has clean import graph (no cli/qdrant/embedding modules)')
+print('PASS: main_runtime has clean import graph (no admin modules)')
 "
 ```
 
@@ -302,6 +327,7 @@ Each ad stored in Qdrant contains:
 | `targeting.blocked_keywords` | string[] | Keywords to exclude |
 | `policy.sensitive` | boolean | Sensitive content flag |
 | `policy.age_restricted` | boolean | Age restriction flag |
+| `enabled` | boolean | Whether the ad is eligible for matching (default `true`; `ads_bulk_disable` sets `false`) |
 
 **Embedding text**: The vector embedding is generated from `title + body + topics`.
 
@@ -309,12 +335,12 @@ Each ad stored in Qdrant contains:
 
 ```python
 from ad_injector.models import Ad, AdTargeting, AdPolicy
-from ad_injector.qdrant_service import create_collection, upsert_ad, query_ads
+from ad_injector.wiring import build_index_service, build_match_service
+from ad_injector.models.mcp_requests import MatchRequest
 
-# Create the collection (once)
-create_collection()
-
-# Create an ad
+# Create the collection (once) and seed ads via IndexService
+index_svc = build_index_service()
+index_svc.ensure_collection()
 ad = Ad(
     ad_id="ad-001",
     advertiser_id="adv-123",
@@ -329,16 +355,15 @@ ad = Ad(
     ),
     policy=AdPolicy(sensitive=False, age_restricted=False),
 )
+index_svc.upsert_ads([ad])
 
-# Generate embedding (using your preferred embedding model)
-embedding = your_embedding_function(ad.embedding_text)
-
-# Upsert to Qdrant
-upsert_ad(ad, embedding)
-
-# Query similar ads
-query_embedding = your_embedding_function("python tutorial")
-results = query_ads(query_embedding, top_k=5)
+# Match ads via MatchService (Data Plane logic)
+match_svc = build_match_service()
+response, audit_trace = match_svc.match(
+    MatchRequest(context_text="python tutorial", top_k=5)
+)
+for c in response.candidates:
+    print(f"{c.ad_id}: {c.title} (score={c.score}, match_id={c.match_id})")
 ```
 
 ## `ads_match` request / response schemas
@@ -382,5 +407,5 @@ The Data Plane `ads_match` tool uses typed DTOs — no raw dict filters are acce
 }
 ```
 
-- `match_id` can be passed to `ads_explain` (future) for audit traces
+- `match_id` can be passed to `ads_explain` for audit traces (why eligible/ineligible, filters, scores)
 - `score` is cosine similarity (0-1)

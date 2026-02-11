@@ -12,13 +12,13 @@ Usage:
 
 from __future__ import annotations
 
-from .config.runtime import get_settings
 from .mcp.server import create_server
 
 
 def main() -> None:
-    settings = get_settings()
-    server = create_server(mode=settings.mcp_mode.value)
+    from .mcp.auth import check_scope
+    check_scope("data")
+    server = create_server(mode="data")
     server.run(transport="stdio")
 
 
